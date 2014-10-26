@@ -1,4 +1,4 @@
-PML_CP
+Practical Machine Learning Course Project
 ======
 
-Practical machine learning Course Project
+Final file: project.html
