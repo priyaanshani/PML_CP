@@ -1,0 +1,80 @@
+---
+title: "Predicting activity quality"
+output: html_document
+theme: united
+---
+Research on human activity recognition (HAR) has traditionally focused on the activity being performed, but not on the quality of the performance. In this project we will use supervised learning techniques to predict how well an activity is being performed, using the training and testing datasets of the Practical Machine Learning course, which come from the HAR project by Groupware@LES.
+
+### Getting and loading the data
+First of all, we must load the needed libraries and download and load the training data into R.
+```{r load_files}
+set.seed(863179)
+
+library(caret)
+
+if(!file.exists("pml-training.csv")){
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+}
+if(!file.exists("pml-testing.csv")){
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+}
+
+data <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!"))
+```
+
+### Exploring the data
+The dataset consists in `r nrow(data)` observations of `r ncol(data)` features. The goal is to predict the `classe` feature, a factor that identifies the quality of the activity performance, with an `A` being a good performance and letters `B` to `E` represent different types of usual errors. The first 7 features identify the perfomer, day and time and other information not related with the quality of the performance. Using those features can lead to overfitting, e.g. if a volunteer performed all the activities chronologically, the model could use that information in the training set. The dataset contains statistics of all the measures (average, variance, standard deviation, minimum, maximum, amplitude, skewness and kurtosis) that are not present in the testing dataset. Thus, we must train the model only with the raw data.
+```{r clean_data}
+data <- data[, -c(1:7)]
+data <- data[, -grep("^avg|^var|^stddev|^amplitude|^min|^max|^skewness|^kurtosis", attr(data, "names"))]
+```
+
+Once the relevant features have been preselected, two partitions, one for training and one for testing the model, are created.
+```{r partitions}
+inTrain <- createDataPartition(y = data$classe, p = 0.7, list=FALSE)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+```
+
+The training data will be used to select the features and the model. In this case expert knowledge can not be applied, but we can try to reduce the number of features by deleting those that are highly correlated with other features. For the training dataset, the features are reduced by 7.
+```{r uncorrelated}
+training <- training[,-findCorrelation(cor(training[,-53]))]
+```
+
+### Selecting the method
+After selecting the features, different models can be trained. Since this is a classification problem, decision trees and ensemble methods like bagging or random forests are more adequate. Given the number of observations, it is better to use cross validation methods with less bias and more variance, since the risk of overfitting is balanced out by a large number of observations. Thus, we will not use bootstrapping, a method with more bias than repeated cross validation or k-folds. The first train is a simple decision tree method.
+```{r tree_fit, cache=TRUE}
+tr <- trainControl(method="repeatedcv")
+modeltree <- train(classe~., data=training, method="rpart", trControl = tr)
+modeltree
+```
+As can be seen, the accuracy of this method is below any reasonable standard. This suggests that an ensemble learning method be used. The next method is a random forest with 5 out of bag resamples and 50 trees. The out of bag resampling is the cross validation method that yields more unbiased accuracy for random forests.
+```{r rf_fit, cache=TRUE}
+tr <- trainControl(method="oob", number=5)
+modelrf <- train(classe~., data=training, method="rf", trControl = tr, ntree=50)
+modelrf
+```
+For the random forest, the accuracy is much better and the model is trained in a reasonable time (for 50 trees, the final model will take much more to train), so it is a good choice for the model.
+
+### Training the final model
+The final model is a random forest with 15 out of bag resamples and 1000 trees. The data will not be preprocessed, since random forests perform better without centering or scaling the data, and other kinds of preprocessing such as PCA are most useful for linear-type models.
+```{r final_model, cache=TRUE}
+tr <- trainControl(method="oob", number=15)
+model <- train(classe~., data=training, method="rf", trControl = tr, ntree=1000)
+model
+```
+
+```{r oos_error}
+model$finalModel
+```
+With out of bag resampling, the estimation of the out of sample error is unbiased. As can be seen, its estimation is 0.68%.
+
+### Testing the model
+Once the final model has been trained, it must be tested. We can create a confusion matrix and check the out of sample error.
+```{r testing}
+confusionMatrix(predict(model, testing), testing$classe)
+```
+According to the statistics, the error is `r (1-confusionMatrix(predict(model, testing), testing$classe)$overall[[1]])*100`%, very close to the estimation of the model.
+
+### Conclusions
+We have trained a random forest that can predict with very good accuracy the quality of an activity performance. We have shown that, given a dataset with raw data of an activity being performed well and with some errors, supervised learning can be used to train a model. Once the model has been trained, a new value can be predicted easily and fast. Such a model could be used to help athletes to train better and avoid injuries.
